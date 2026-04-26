@@ -12,6 +12,7 @@ from alpha_factory.backtest.backtester import run_backtest
 from alpha_factory.data.data_loader import load_data
 from alpha_factory.data.sample_data_generator import generate_sample_data
 from alpha_factory.evaluation.factor_evaluator import evaluate_factor
+from alpha_factory.factors.expression_engine import compute_expression_factor
 from alpha_factory.factors.factor_engine import compute_factor
 from alpha_factory.factors.factor_generator import generate_factor_plan
 from alpha_factory.processing.neutralizer import neutralize_size
@@ -53,6 +54,7 @@ def main(argv: list[str] | None = None) -> None:
 
     for generated_factor in factor_plan["generated_factors"]:
         factor_name = generated_factor["factor_name"]
+        factor_type = generated_factor.get("factor_type", "template")
         template_name = generated_factor["template_name"]
         window = generated_factor["window"]
         factor_col = f"factor_{factor_name}"
@@ -60,12 +62,19 @@ def main(argv: list[str] | None = None) -> None:
         neutralized_col = f"{factor_col}_neutralized"
         smoothed_col = f"{factor_col}_smoothed"
 
-        factor_data = compute_factor(
-            universe,
-            template_name=template_name,
-            window=window,
-            output_col=factor_col,
-        )
+        if factor_type == "generated_expression":
+            factor_data = compute_expression_factor(
+                universe,
+                expression=generated_factor["expression"],
+                output_col=factor_col,
+            )
+        else:
+            factor_data = compute_factor(
+                universe,
+                template_name=template_name,
+                window=window,
+                output_col=factor_col,
+            )
         factor_data = normalize_factor(
             factor_data,
             factor_col=factor_col,

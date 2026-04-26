@@ -7,6 +7,7 @@ import urllib.request
 from typing import Any
 
 from alpha_factory.config import ALLOWED_WINDOWS
+from alpha_factory.factors.expression_engine import ExpressionValidationError, validate_expression
 from alpha_factory.factors.factor_request import NaturalLanguageFactorRequest
 from alpha_factory.factors.template_library import get_template_library
 
@@ -67,12 +68,19 @@ def _call_deepseek(raw_text: str, api_key: str) -> dict[str, Any]:
             "你是 A 股因子研究规划器。只能输出 JSON，不要输出 Markdown。\n"
             f"合法模板: {template_names}\n"
             f"合法窗口: {ALLOWED_WINDOWS}\n"
-            "优先组合已有模板。只有现有模板组合无法表达时，才提议新模板。\n"
-            "若用户提到 KDJ、J线、等J、少妇战法、超卖反弹，优先选择 kdj_j_rebound 或 kdj_j_oversold。\n"
-            "如需新模板，可以在 new_template 中给出 implementation_note 或 code_sketch 供人工审阅；系统不会自动执行这些内容。\n"
+            "最高优先级是生成贴近用户自然语言需求的因子表达式。\n"
+            "你可以输出两类因子：1) generated_expressions 生成更贴合用户自然语言的安全表达式；"
+            "2) selected_templates 选择已有模板作为基准对照。\n"
+            "除非用户明确只要基础模板，否则 generated_expressions 至少输出 2 个、最多输出 5 个，并按贴合度从高到低排序。\n"
+            "安全表达式只能使用字段 open/high/low/close/volume/amount/returns，数字常量，四则运算，"
+            "以及函数 delay, delta, mean, std, max, min, correlation, rank, zscore, abs, log, kdj_j。\n"
+            "函数示例：delay(close, 5), mean(amount, 20), correlation(close, volume, 10), kdj_j(10)。\n"
+            "不要输出 Python 代码、赋值、import、lambda、属性访问或下标访问。\n"
+            "如需真正新增安全算子，可以在 new_template 中给出 implementation_note 或 code_sketch 供人工审阅；系统不会自动执行这些内容。\n"
             "输出格式必须为：\n"
             "{"
             '"intent": "...", '
+            '"generated_expressions": [{"factor_name": "...", "expression": "...", "reason": "...", "category": "..."}], '
             '"selected_templates": [{"template_name": "...", "windows": [5], "reason": "..."}], '
             '"need_new_template": false, '
             '"new_template": null'
@@ -119,6 +127,7 @@ def _extract_json_object(text: str) -> str:
 def _sanitize_plan(plan: dict[str, Any], fallback_reason: str) -> dict[str, Any]:
     templates = get_template_library()
     selected = []
+    generated_expressions = []
     rejected = []
 
     for item in plan.get("selected_templates", []):
@@ -144,7 +153,19 @@ def _sanitize_plan(plan: dict[str, Any], fallback_reason: str) -> dict[str, Any]
             }
         )
 
-    if not selected:
+    for item in plan.get("generated_expressions", []):
+        sanitized_expression = _sanitize_generated_expression(item)
+        if sanitized_expression is None:
+            rejected.append(
+                {
+                    "template_name": item.get("factor_name", "generated_expression"),
+                    "reason": "invalid_generated_expression",
+                }
+            )
+            continue
+        generated_expressions.append(sanitized_expression)
+
+    if not selected and not generated_expressions:
         selected = _default_selected_templates()
 
     new_template = plan.get("new_template") if plan.get("need_new_template") else None
@@ -153,6 +174,7 @@ def _sanitize_plan(plan: dict[str, Any], fallback_reason: str) -> dict[str, Any]
     return {
         "intent": str(plan.get("intent", "general_factor_research")),
         "selected_templates": selected,
+        "generated_expressions": generated_expressions,
         "need_new_template": bool(sanitized_new_template),
         "new_template": sanitized_new_template,
         "planner_mode": "llm",
@@ -166,6 +188,7 @@ def _sanitize_plan(plan: dict[str, Any], fallback_reason: str) -> dict[str, Any]
 def _rule_based_plan(raw_text: str, reason: str) -> dict[str, Any]:
     text = raw_text.lower()
     selected: list[dict[str, Any]]
+    generated_expressions: list[dict[str, Any]] = []
     intent = "basic_factor_research"
     new_template = None
 
@@ -188,6 +211,26 @@ def _rule_based_plan(raw_text: str, reason: str) -> dict[str, Any]:
                 "reason": "作为短期价格反转基准对照",
             },
         ]
+        generated_expressions = [
+            {
+                "factor_name": "nl_kdj_j_rebound_quality",
+                "expression": "rank((20 - kdj_j(10)) / 100 + delta(kdj_j(10), 1) / 100 - std(returns, 10))",
+                "reason": "把题词拆成 J 线低位、J 线向上拐头、并惩罚短期过高波动的复合信号",
+                "category": "llm_composite_reversal",
+            },
+            {
+                "factor_name": "nl_kdj_j_rebound_volume_confirm",
+                "expression": "rank(-1 * kdj_j(10)) + rank(delta(kdj_j(10), 1)) + rank(volume / mean(volume, 10))",
+                "reason": "在 J 线低位和 J 线回升之外，加入成交量相对放大的确认项",
+                "category": "llm_composite_reversal",
+            },
+            {
+                "factor_name": "nl_kdj_j_low_vol_rebound",
+                "expression": "rank((20 - kdj_j(20)) / 100) + rank(-1 * std(returns, 10))",
+                "reason": "偏向更平稳的 J 线低位反弹，避免只选高波动下跌后的股票",
+                "category": "llm_composite_reversal",
+            }
+        ]
     elif any(token in text for token in ["放量", "volume spike", "turnover"]) and any(
         token in text for token in ["反转", "reversal"]
     ):
@@ -195,6 +238,20 @@ def _rule_based_plan(raw_text: str, reason: str) -> dict[str, Any]:
         selected = [
             {"template_name": "reversal", "windows": [5, 10], "reason": "用户想测试短期反转"},
             {"template_name": "turnover_proxy", "windows": [5, 10], "reason": "用于刻画放量"},
+        ]
+        generated_expressions = [
+            {
+                "factor_name": "nl_volume_spike_reversal",
+                "expression": "rank(volume / mean(volume, 5)) + rank(-1 * (close / delay(close, 5) - 1))",
+                "reason": "组合短期放量和短期价格反转，贴合放量后的反转题词",
+                "category": "llm_composite_volume_price",
+            },
+            {
+                "factor_name": "nl_amount_spike_reversal",
+                "expression": "rank(amount / mean(amount, 10)) + rank(-1 * (close / delay(close, 10) - 1))",
+                "reason": "用成交额相对放大替代单纯成交量，减少价格水平差异影响",
+                "category": "llm_composite_volume_price",
+            }
         ]
     elif any(token in text for token in ["低波动", "low volatility", "低波"]) and any(
         token in text for token in ["流动性", "liquidity"]
@@ -204,12 +261,40 @@ def _rule_based_plan(raw_text: str, reason: str) -> dict[str, Any]:
             {"template_name": "inverse_volatility", "windows": [10, 20], "reason": "刻画低波动偏好"},
             {"template_name": "liquidity", "windows": [10, 20], "reason": "刻画高流动性"},
         ]
+        generated_expressions = [
+            {
+                "factor_name": "nl_low_vol_high_liquidity",
+                "expression": "rank(mean(amount, 20)) - rank(std(returns, 20))",
+                "reason": "同时奖励高成交额流动性并惩罚高波动",
+                "category": "llm_composite_quality",
+            },
+            {
+                "factor_name": "nl_liquidity_stability",
+                "expression": "rank(mean(amount, 10)) + rank(-1 * abs(delta(mean(amount, 10), 10))) - rank(std(returns, 10))",
+                "reason": "偏好成交额较高且成交额变化更稳定的低波动股票",
+                "category": "llm_composite_quality",
+            }
+        ]
     elif any(token in text for token in ["价量背离", "背离", "divergence"]):
         intent = "volume_price_divergence"
         selected = [
             {"template_name": "price_volume_corr", "windows": [10, 20], "reason": "刻画价量相关关系"},
             {"template_name": "turnover_proxy", "windows": [10, 20], "reason": "辅助观察成交量变化"},
             {"template_name": "distance_to_ma", "windows": [10, 20], "reason": "辅助观察价格偏离"},
+        ]
+        generated_expressions = [
+            {
+                "factor_name": "nl_volume_price_divergence",
+                "expression": "rank(delta(volume, 10)) - rank(delta(close, 10))",
+                "reason": "直接刻画成交量变化强于价格变化的价量背离",
+                "category": "llm_composite_volume_price",
+            },
+            {
+                "factor_name": "nl_amount_price_divergence",
+                "expression": "rank(delta(mean(amount, 5), 5)) - rank(delta(close, 10))",
+                "reason": "用短期成交额均值变化刻画资金活跃度和价格变化之间的背离",
+                "category": "llm_composite_volume_price",
+            }
         ]
         new_template = _volume_price_divergence_template()
     elif any(token in text for token in ["动量", "momentum"]):
@@ -225,6 +310,7 @@ def _rule_based_plan(raw_text: str, reason: str) -> dict[str, Any]:
     return {
         "intent": intent,
         "selected_templates": selected,
+        "generated_expressions": generated_expressions,
         "need_new_template": new_template is not None,
         "new_template": new_template,
         "planner_mode": "rule_based",
@@ -256,6 +342,26 @@ def _volume_price_divergence_template() -> dict[str, Any]:
             "not_only_parameter_change": True,
         },
     }
+
+
+def _sanitize_generated_expression(item: dict[str, Any]) -> dict[str, Any] | None:
+    expression = str(item.get("expression", "")).strip()
+    try:
+        validate_expression(expression)
+    except ExpressionValidationError:
+        return None
+
+    return {
+        "factor_name": _safe_factor_name(str(item.get("factor_name", "")), "llm_generated_factor"),
+        "expression": expression,
+        "reason": str(item.get("reason", "")),
+        "category": str(item.get("category", "llm_generated")),
+    }
+
+
+def _safe_factor_name(name: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip().lower()).strip("_")
+    return cleaned[:80] or fallback
 
 
 def _sanitize_new_template(template: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -21,6 +21,34 @@ def generate_factor_plan(request_text: str) -> dict[str, Any]:
     rejected = []
     seen_hashes: set[str] = set()
 
+    for index, item in enumerate(plan.get("generated_expressions", []), start=1):
+        expression = item["expression"]
+        expression_hash = _expression_hash("generated_expression", expression, 0)
+        if expression_hash in seen_hashes:
+            rejected.append(
+                {
+                    "template_name": item.get("factor_name", f"llm_generated_{index}"),
+                    "window": None,
+                    "expression": expression,
+                    "reason": "duplicate_expression_hash",
+                }
+            )
+            continue
+        seen_hashes.add(expression_hash)
+        factor_name = item.get("factor_name") or f"llm_generated_{index}"
+        generated.append(
+            {
+                "factor_type": "generated_expression",
+                "factor_name": factor_name,
+                "template_name": "generated_expression",
+                "window": None,
+                "expression": expression,
+                "expression_hash": expression_hash,
+                "reason": item.get("reason", ""),
+                "category": item.get("category", "llm_generated"),
+            }
+        )
+
     for item in plan["selected_templates"]:
         template_name = item["template_name"]
         template = templates.get(template_name)
@@ -51,6 +79,7 @@ def generate_factor_plan(request_text: str) -> dict[str, Any]:
             seen_hashes.add(expression_hash)
             generated.append(
                 {
+                    "factor_type": "template",
                     "factor_name": f"{template_name}_{window}",
                     "template_name": template_name,
                     "window": window,
@@ -93,6 +122,9 @@ def write_factor_generation_outputs(output: dict[str, Any]) -> None:
         "request": output["request"],
         "planner": output["planner"],
         "generated_factor_count": len(output["generated_factors"]),
+        "generated_expression_count": sum(
+            1 for item in output["generated_factors"] if item.get("factor_type") == "generated_expression"
+        ),
         "rejected_factor_count": len(output["rejected_factors"]),
         "new_template_proposal_count": len(output["new_template_proposals"]),
     }

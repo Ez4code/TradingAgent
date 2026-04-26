@@ -28,7 +28,8 @@
 - 本项目不是实盘交易系统。
 - 回测结果不是未来收益承诺。
 - 任何自然语言需求都不会直接变成可执行 Python 代码。
-- LLM 只能选择已有模板，不能自由发明并直接运行因子代码。
+- LLM 可以选择已有模板，也可以生成受限表达式 DSL，但不能直接运行 Python 代码。
+- 受限表达式只允许白名单字段、白名单算子和四则运算，并由本地 parser 执行。
 - 新模板只能写入 proposal 文件，默认不会加入正式模板库。
 
 ## 3. 项目目录结构
@@ -50,6 +51,7 @@ alpha_factory/
     template_library.py      固定因子模板库
     factor_generator.py      根据规划结果生成因子计划
     factor_engine.py         安全执行因子模板
+    expression_engine.py     安全解析并执行 LLM 生成的受限表达式
     operators.py             安全算子
     factor_request.py        自然语言请求结构
     llm_planner.py           DeepSeek / 规则解析规划器
@@ -118,6 +120,24 @@ python main.py --request "测试价量背离因子"
 ```
 
 程序会先尝试调用 DeepSeek。如果没有 API key 或网络不可用，会自动回退到本地规则解析。
+
+自然语言规划可能产生两类因子：
+
+```text
+template              来自正式模板库的固定模板因子
+generated_expression  LLM 或规则解析生成的受限表达式因子
+```
+
+系统会优先生成和执行 `generated_expression`，因为它更容易贴近用户的自然语言题词；`template` 因子主要作为可解释、稳定的基准对照。
+
+`generated_expression` 不是 Python 代码。它只能使用系统允许的字段、函数和四则运算，例如：
+
+```text
+rank(mean(amount, 20)) - rank(std(returns, 20))
+rank((20 - kdj_j(10)) / 100 + delta(kdj_j(10), 1) / 100 - std(returns, 10))
+```
+
+这些表达式会先经过 parser 校验，再由本地安全算子执行。
 
 DeepSeek API key 的环境变量名称是：
 
@@ -260,6 +280,8 @@ kdj_j_rebound         (20 - kdj_j(close, high, low, N)) / 100 + delta(kdj_j(...)
 
 其中 `kdj_j_oversold` 和 `kdj_j_rebound` 用于表达 J 线超卖和 J 线拐头反弹一类题词，例如“等 J 来”“KDJ 超卖反弹”。它们仍然是正式模板库中的显式实现，不是运行时直接执行 LLM 生成的代码。
 
+除了正式模板外，自然语言规划器还可以输出 `generated_expression`。这类表达式使用受限 DSL，不会进入正式模板库，但可以直接参与当次研究、RankIC 和回测，用来更贴近自然语言题词。
+
 ## 11. 为什么禁止 eval
 
 `eval` 可以把字符串当代码执行。它很危险，因为 LLM 或用户输入的内容如果被直接执行，可能造成安全风险。
@@ -272,7 +294,9 @@ kdj_j_rebound         (20 - kdj_j(close, high, low, N)) / 100 + delta(kdj_j(...)
 - `rolling_corr_by_symbol`
 - `kdj_j_by_symbol`
 
-这保证了 LLM 可以提出因子草案或实现建议，但不能把生成内容直接作为 Python 代码执行。新因子只有在人工或 Agent 审阅后，明确加入模板库和执行引擎，才会进入正式运行路径。
+LLM 生成的受限表达式会进入 `expression_engine.py`，由 `ast` parser 检查语法树，只允许白名单节点，例如数字、字段名、四则运算和白名单函数。表达式不允许 `import`、赋值、属性访问、下标访问、lambda 或任意函数调用。
+
+这保证了 LLM 可以提出更贴合题词的复合因子，但不能把生成内容作为 Python 代码执行。需要新增安全算子或正式模板时，仍要人工或 Agent 审阅后再加入模板库和执行引擎。
 
 ## 12. 因子处理流程
 
