@@ -68,7 +68,9 @@ def _call_deepseek(raw_text: str, api_key: str) -> dict[str, Any]:
             f"合法模板: {template_names}\n"
             f"合法窗口: {ALLOWED_WINDOWS}\n"
             "优先组合已有模板。只有现有模板组合无法表达时，才提议新模板。\n"
-            "禁止输出 Python 代码。输出格式必须为：\n"
+            "若用户提到 KDJ、J线、等J、少妇战法、超卖反弹，优先选择 kdj_j_rebound 或 kdj_j_oversold。\n"
+            "如需新模板，可以在 new_template 中给出 implementation_note 或 code_sketch 供人工审阅；系统不会自动执行这些内容。\n"
+            "输出格式必须为：\n"
             "{"
             '"intent": "...", '
             '"selected_templates": [{"template_name": "...", "windows": [5], "reason": "..."}], '
@@ -167,7 +169,26 @@ def _rule_based_plan(raw_text: str, reason: str) -> dict[str, Any]:
     intent = "basic_factor_research"
     new_template = None
 
-    if any(token in text for token in ["放量", "volume spike", "turnover"]) and any(
+    if any(token in text for token in ["j线", "等j", "kdj", "少妇战法", "超卖"]):
+        intent = "kdj_j_rebound_reversal"
+        selected = [
+            {
+                "template_name": "kdj_j_rebound",
+                "windows": [10, 20],
+                "reason": "用户题词指向 J 线超卖后等待拐头的反转信号",
+            },
+            {
+                "template_name": "kdj_j_oversold",
+                "windows": [10, 20],
+                "reason": "用于刻画 J 线越低、潜在反弹弹性越高的备选信号",
+            },
+            {
+                "template_name": "reversal",
+                "windows": [5, 10],
+                "reason": "作为短期价格反转基准对照",
+            },
+        ]
+    elif any(token in text for token in ["放量", "volume spike", "turnover"]) and any(
         token in text for token in ["反转", "reversal"]
     ):
         intent = "volume_price_reversal"
@@ -262,7 +283,11 @@ def _sanitize_new_template(template: dict[str, Any] | None) -> dict[str, Any] | 
         "correlation",
         "delay",
         "max",
+        "min",
+        "kdj_j",
         "close",
+        "high",
+        "low",
         "volume",
         "amount",
         "returns",
@@ -286,4 +311,6 @@ def _sanitize_new_template(template: dict[str, Any] | None) -> dict[str, Any] | 
         "category": str(template["category"]),
         "reason": str(template["reason"]),
         "novelty_check": novelty_check,
+        "implementation_note": str(template.get("implementation_note", "")),
+        "code_sketch": str(template.get("code_sketch", "")),
     }

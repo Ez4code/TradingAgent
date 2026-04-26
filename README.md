@@ -248,6 +248,8 @@ liquidity             mean(amount, N)
 breakout              close / max(close, N) - 1
 distance_to_ma        close / mean(close, N) - 1
 turnover_proxy        volume / mean(volume, N)
+kdj_j_oversold        -1 * kdj_j(close, high, low, N)
+kdj_j_rebound         (20 - kdj_j(close, high, low, N)) / 100 + delta(kdj_j(...), 1) / 100
 ```
 
 合法窗口：
@@ -255,6 +257,8 @@ turnover_proxy        volume / mean(volume, N)
 ```text
 [5, 10, 20, 40, 60]
 ```
+
+其中 `kdj_j_oversold` 和 `kdj_j_rebound` 用于表达 J 线超卖和 J 线拐头反弹一类题词，例如“等 J 来”“KDJ 超卖反弹”。它们仍然是正式模板库中的显式实现，不是运行时直接执行 LLM 生成的代码。
 
 ## 11. 为什么禁止 eval
 
@@ -266,8 +270,9 @@ turnover_proxy        volume / mean(volume, N)
 - `rolling_mean_by_symbol`
 - `rolling_std_by_symbol`
 - `rolling_corr_by_symbol`
+- `kdj_j_by_symbol`
 
-这保证了 LLM 只能“选择模板”，不能“自由写代码执行”。
+这保证了 LLM 可以提出因子草案或实现建议，但不能把生成内容直接作为 Python 代码执行。新因子只有在人工或 Agent 审阅后，明确加入模板库和执行引擎，才会进入正式运行路径。
 
 ## 12. 因子处理流程
 

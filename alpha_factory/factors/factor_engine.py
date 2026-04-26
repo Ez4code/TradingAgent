@@ -2,6 +2,7 @@ import pandas as pd
 
 from alpha_factory.factors.operators import (
     delay_by_symbol,
+    kdj_j_by_symbol,
     rolling_corr_by_symbol,
     rolling_max_by_symbol,
     rolling_mean_by_symbol,
@@ -40,6 +41,12 @@ def compute_factor(
         result[output_col] = result["close"] / rolling_mean_by_symbol(result, "close", window) - 1.0
     elif template_name == "turnover_proxy":
         result[output_col] = result["volume"] / rolling_mean_by_symbol(result, "volume", window)
+    elif template_name == "kdj_j_oversold":
+        result[output_col] = -1.0 * kdj_j_by_symbol(result, window)
+    elif template_name == "kdj_j_rebound":
+        j_line = kdj_j_by_symbol(result, window)
+        j_delta = j_line.groupby(result["symbol"], sort=False).diff(1)
+        result[output_col] = (20.0 - j_line) / 100.0 + j_delta / 100.0
     else:
         raise ValueError(f"unknown factor template: {template_name}")
 
