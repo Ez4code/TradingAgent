@@ -20,6 +20,11 @@ ALLOWED_FUNCTIONS = {
     "min",
     "rank",
     "std",
+    "sum",
+    "ts_corr",
+    "ts_mean",
+    "ts_std",
+    "ts_sum",
     "zscore",
 }
 
@@ -135,7 +140,7 @@ def _evaluate_call(node: ast.Call, data: pd.DataFrame) -> Any:
 
     args = [_evaluate_node(arg, data) for arg in node.args]
 
-    if name in {"delay", "delta", "mean", "std"}:
+    if name in {"delay", "delta", "mean", "std", "sum", "ts_mean", "ts_std", "ts_sum"}:
         if len(args) != 2:
             raise ExpressionValidationError(f"{name}_requires_2_arguments")
         series = _as_series(args[0], data)
@@ -144,7 +149,8 @@ def _evaluate_call(node: ast.Call, data: pd.DataFrame) -> Any:
             return series.groupby(data["symbol"], sort=False).shift(window)
         if name == "delta":
             return series - series.groupby(data["symbol"], sort=False).shift(window)
-        return _rolling_by_symbol(series, data, window, name)
+        rolling_method = _rolling_alias(name)
+        return _rolling_by_symbol(series, data, window, rolling_method)
 
     if name in {"max", "min"}:
         if len(args) != 2:
@@ -155,7 +161,7 @@ def _evaluate_call(node: ast.Call, data: pd.DataFrame) -> Any:
         window = _int_arg(args[1])
         return _rolling_by_symbol(series, data, window, name)
 
-    if name == "correlation":
+    if name in {"correlation", "ts_corr"}:
         if len(args) != 3:
             raise ExpressionValidationError("correlation_requires_3_arguments")
         return _rolling_corr_by_symbol(
@@ -204,6 +210,8 @@ def _rolling_by_symbol(series: pd.Series, data: pd.DataFrame, window: int, metho
             return rolling.mean()
         if method == "std":
             return rolling.std()
+        if method == "sum":
+            return rolling.sum()
         if method == "max":
             return rolling.max()
         if method == "min":
@@ -211,6 +219,15 @@ def _rolling_by_symbol(series: pd.Series, data: pd.DataFrame, window: int, metho
         raise ExpressionValidationError(f"unsupported_rolling_method: {method}")
 
     return series.groupby(data["symbol"], sort=False).transform(_apply)
+
+
+def _rolling_alias(name: str) -> str:
+    aliases = {
+        "ts_mean": "mean",
+        "ts_std": "std",
+        "ts_sum": "sum",
+    }
+    return aliases.get(name, name)
 
 
 def _rolling_corr_by_symbol(
