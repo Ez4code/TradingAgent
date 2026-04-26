@@ -7,11 +7,14 @@ from alpha_factory.config import (
     DEFAULT_NUM_DAYS,
     DEFAULT_NUM_SYMBOLS,
     SAMPLE_DATA_PATH,
+    STOCK_MATCH_MIN_OBS,
+    STOCK_MATCH_TOP_N,
 )
 from alpha_factory.backtest.backtester import run_backtest
 from alpha_factory.data.data_loader import load_data
 from alpha_factory.data.sample_data_generator import generate_sample_data
 from alpha_factory.evaluation.factor_evaluator import evaluate_factor
+from alpha_factory.evaluation.factor_stock_matcher import match_stocks_to_factor
 from alpha_factory.factors.expression_engine import compute_expression_factor
 from alpha_factory.factors.factor_engine import compute_factor
 from alpha_factory.factors.factor_generator import generate_factor_plan
@@ -42,6 +45,7 @@ def main(argv: list[str] | None = None) -> None:
     summaries = []
     factor_logs = []
     backtest_results = []
+    stock_match_results = []
     warnings = list(data.attrs.get("data_warnings", []))
     warnings.extend(universe_filter.get_warnings())
 
@@ -127,6 +131,16 @@ def main(argv: list[str] | None = None) -> None:
         concentration_risk = _detect_concentration_risk(backtest_result["metrics"])
         backtest_result["concentration_risk"] = concentration_risk
         warnings.extend(backtest_result.get("warnings", []))
+        stock_matches = match_stocks_to_factor(
+            factor_data,
+            factor_col=smoothed_col,
+            factor_name=factor_name,
+            future_return_col="future_return",
+            min_obs=STOCK_MATCH_MIN_OBS,
+            positive_only=True,
+            top_n=STOCK_MATCH_TOP_N,
+        )
+        stock_match_results.extend(stock_matches)
 
         summary["factor"] = factor_name
         summary["template_name"] = template_name
@@ -164,6 +178,7 @@ def main(argv: list[str] | None = None) -> None:
         summaries=summaries,
         factor_logs=factor_logs,
         backtest_results=backtest_results,
+        stock_match_results=stock_match_results,
         warnings=warnings,
         data_mode=DATA_MODE,
     )

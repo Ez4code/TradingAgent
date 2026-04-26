@@ -19,6 +19,8 @@ DEFAULT_REQUEST = "生成一组动量、反转、波动率基础因子"
 BACKTEST_TOP_K_LIST = [50, 100, 200]
 ROUND_TRIP_COST = 0.0025
 TRADING_DAYS_PER_YEAR = 252
+STOCK_MATCH_MIN_OBS = int(os.getenv("STOCK_MATCH_MIN_OBS", "30"))
+STOCK_MATCH_TOP_N = int(os.getenv("STOCK_MATCH_TOP_N", "0"))
 
 DATA_MODE = os.getenv("DATA_MODE", "demo").strip().lower()
 START_DATE = os.getenv("START_DATE", "20240101")

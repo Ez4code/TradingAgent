@@ -5,12 +5,14 @@ from typing import Any
 import pandas as pd
 
 from alpha_factory.config import OUTPUTS_DIR
+from alpha_factory.evaluation.factor_stock_matcher import MATCH_REPORT_COLUMNS
 
 
 def write_reports(
     summaries: list[dict[str, object]],
     factor_logs: list[dict[str, object]],
     backtest_results: list[dict[str, Any]] | None = None,
+    stock_match_results: list[dict[str, object]] | None = None,
     warnings: list[str] | None = None,
     data_mode: str = "",
 ) -> None:
@@ -62,9 +64,12 @@ def write_reports(
     if backtest_results is not None:
         write_backtest_outputs(backtest_results)
 
+    write_stock_match_outputs(stock_match_results or [])
+
     write_final_summary(
         summaries=summaries,
         backtest_results=backtest_results or [],
+        stock_match_results=stock_match_results or [],
         warnings=warnings or [],
         data_mode=data_mode,
     )
@@ -87,9 +92,21 @@ def write_backtest_outputs(backtest_results: list[dict[str, Any]]) -> None:
         json.dump(_json_safe(report), file, ensure_ascii=False, indent=2)
 
 
+def write_stock_match_outputs(stock_match_results: list[dict[str, object]]) -> None:
+    report_df = pd.DataFrame(stock_match_results)
+    if report_df.empty:
+        report_df = pd.DataFrame(columns=MATCH_REPORT_COLUMNS)
+    else:
+        ordered_columns = [col for col in MATCH_REPORT_COLUMNS if col in report_df.columns]
+        extra_columns = [col for col in report_df.columns if col not in ordered_columns]
+        report_df = report_df[ordered_columns + extra_columns]
+    report_df.to_csv(OUTPUTS_DIR / "factor_stock_match_report.csv", index=False)
+
+
 def write_final_summary(
     summaries: list[dict[str, object]],
     backtest_results: list[dict[str, Any]],
+    stock_match_results: list[dict[str, object]],
     warnings: list[str],
     data_mode: str,
 ) -> None:
@@ -99,6 +116,7 @@ def write_final_summary(
         f"- data_mode: {data_mode or 'unknown'}",
         f"- factor_count: {len(summaries)}",
         f"- backtest_factor_count: {len(backtest_results)}",
+        f"- factor_stock_match_count: {len(stock_match_results)}",
         "- trading_timeline: signal uses T close and earlier; simulated return is open_{T+2} / open_{T+1} - 1.",
         "- live_trading: disabled; this is research-only output.",
         "",

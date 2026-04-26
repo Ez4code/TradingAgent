@@ -199,6 +199,8 @@ MAX_RETRIES            下载失败重试次数
 MIN_AMOUNT_THRESHOLD   最低成交额阈值
 USE_A_SHARE_FILTERS    是否启用 A 股股票池过滤
 AKSHARE_SYMBOL_LIMIT   限制下载股票数量，0 表示不限制
+STOCK_MATCH_MIN_OBS    股票-因子匹配的最低有效样本数，默认 30
+STOCK_MATCH_TOP_N      每个因子最多输出多少只匹配股票，0 表示不限制
 ```
 
 这些配置大多可以通过环境变量覆盖。例如：
@@ -379,6 +381,7 @@ generated_factors.json      实际生成并执行的因子列表
 rejected_factors.csv        被拒绝或跳过的因子
 new_template_proposals.json 新模板提案，不会自动加入正式库
 factor_report.csv           因子评估和回测总表
+factor_stock_match_report.csv 因子-股票正相关匹配报告
 factors_simple_log.csv      因子运行日志
 equity_curve.csv            每日权益曲线
 backtest_report.json        回测详细指标
@@ -409,9 +412,50 @@ concentration_risk     是否有集中度风险标记
 
 注意：demo 数据是合成数据，不要对它的收益指标做真实投资解释。
 
-## 18. 常见问题排查
+## 18. 如何阅读 factor_stock_match_report.csv
 
-### 18.1 `ModuleNotFoundError: No module named 'pandas'`
+这个文件回答的问题是：
+
+```text
+给定一个因子，哪些股票历史上和这个因子的未来收益关系为正，并且相关性更高？
+```
+
+系统对每个因子、每只股票单独计算时间序列相关：
+
+```text
+corr_spearman = SpearmanCorr(该股票的因子序列, 该股票的 future_return 序列)
+```
+
+默认只保留：
+
+```text
+obs_count >= STOCK_MATCH_MIN_OBS
+corr_spearman > 0
+```
+
+然后按 `corr_spearman` 从高到低排序。
+
+重点字段：
+
+```text
+factor                            因子名称
+symbol                            股票代码
+rank                              该因子下的匹配排名
+obs_count                         有效样本数，即因子值和 future_return 都存在的日期数
+corr_spearman                     时间序列 Spearman 相关，越高表示历史正相关越强
+corr_pearson                      时间序列 Pearson 相关
+positive_signal_count             因子信号大于 0 的样本数
+positive_signal_hit_rate          因子信号大于 0 时，future_return 为正的比例
+avg_return_when_positive_signal   因子信号大于 0 时的平均 future_return
+avg_return_when_nonpositive_signal 因子信号小于等于 0 时的平均 future_return
+last_factor_value                 最近一个有效信号值
+```
+
+这个报告用于研究“因子更适配哪些股票”，不是荐股。相关性越高不代表未来一定有效，尤其在三个月样本里更容易过拟合。
+
+## 19. 常见问题排查
+
+### 19.1 `ModuleNotFoundError: No module named 'pandas'`
 
 说明 Python 环境缺少 pandas。安装：
 
@@ -419,7 +463,7 @@ concentration_risk     是否有集中度风险标记
 pip install pandas numpy
 ```
 
-### 18.2 AKShare 模式提示未安装
+### 19.2 AKShare 模式提示未安装
 
 安装：
 
@@ -427,7 +471,7 @@ pip install pandas numpy
 pip install akshare
 ```
 
-### 18.3 AKShare 下载失败
+### 19.3 AKShare 下载失败
 
 先查看：
 
@@ -449,7 +493,7 @@ alpha_factory/outputs/final_summary.md
 REQUEST_SLEEP_SECONDS=1 MAX_RETRIES=5 DATA_MODE=akshare python main.py
 ```
 
-### 18.4 DeepSeek 没有调用成功
+### 19.4 DeepSeek 没有调用成功
 
 查看控制台：
 
@@ -471,13 +515,13 @@ Planner mode: rule_based
 - 网络不可用。
 - API 返回格式异常。
 
-### 18.5 为什么 Top50 / Top100 / Top200 结果一样
+### 19.5 为什么 Top50 / Top100 / Top200 结果一样
 
 demo 数据只有 50 只股票。如果股票数少于 K，系统会选择全部可用股票。所以 Top100 和 Top200 会退化为同一组股票。
 
 真实 A 股数据足够多时，这三个组合才会明显不同。
 
-## 19. 开发新因子的正确方式
+## 20. 开发新因子的正确方式
 
 推荐流程：
 
@@ -492,7 +536,7 @@ demo 数据只有 50 只股票。如果股票数少于 K，系统会选择全部
 
 正式加入模板库前，需要人工审核。
 
-## 20. 修改代码时的建议顺序
+## 21. 修改代码时的建议顺序
 
 如果你想继续开发，建议按以下顺序：
 
@@ -505,7 +549,7 @@ demo 数据只有 50 只股票。如果股票数少于 K，系统会选择全部
 
 不要一次性大改多个模块。这样更容易定位问题。
 
-## 21. 最小验证命令
+## 22. 最小验证命令
 
 每次修改后，建议至少运行：
 
@@ -583,7 +627,7 @@ python main.py --request "少妇战法，等J来"
 
 主流程会先检查缓存。如果所需股票在指定日期范围内已经缓存好，就直接开始分析；如果缺失或缓存日期不足，才会尝试下载。
 
-## 22. 研究结果如何判断
+## 23. 研究结果如何判断
 
 不要只看单个指标。
 
@@ -599,7 +643,7 @@ python main.py --request "少妇战法，等J来"
 
 如果 Top50 很好，但 Top100 和 Top200 很差，可能只是少数股票驱动，系统会标记 `concentration_risk`。
 
-## 23. 当前阶段没有做什么
+## 24. 当前阶段没有做什么
 
 当前阶段仍然没有做：
 
@@ -614,7 +658,7 @@ python main.py --request "少妇战法，等J来"
 
 这些都应该在后续阶段谨慎加入。
 
-## 24. 安全原则
+## 25. 安全原则
 
 继续开发时请保持以下原则：
 
@@ -626,6 +670,6 @@ python main.py --request "少妇战法，等J来"
 - 所有近似实现都要写 warning。
 - 始终保持 `python main.py` 可运行。
 
-## 25. 一句话总结
+## 26. 一句话总结
 
 这个项目是一个可复现的 A 股因子研究流水线。它用固定模板和安全算子生成因子，用严格交易时序避免未来函数，用 RankIC 和 TopK 回测检验信号，并把所有不确定或无法精确实现的地方写入 warning，方便后续继续开发。
