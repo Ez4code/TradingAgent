@@ -15,6 +15,7 @@ from alpha_factory.factors.template_library import get_template_library
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-pro"
 DEEPSEEK_REASONING_EFFORT = "high"
+DEEPSEEK_TIMEOUT_SECONDS = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "120"))
 
 
 def plan_from_request(request: NaturalLanguageFactorRequest) -> dict[str, Any]:
@@ -110,7 +111,7 @@ def _call_deepseek(raw_text: str, api_key: str) -> dict[str, Any]:
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=45) as response:
+    with urllib.request.urlopen(request, timeout=DEEPSEEK_TIMEOUT_SECONDS) as response:
         body = json.loads(response.read().decode("utf-8"))
 
     content = body["choices"][0]["message"]["content"]

@@ -135,7 +135,7 @@ def _evaluate_call(node: ast.Call, data: pd.DataFrame) -> Any:
 
     args = [_evaluate_node(arg, data) for arg in node.args]
 
-    if name in {"delay", "delta", "mean", "std", "max", "min"}:
+    if name in {"delay", "delta", "mean", "std"}:
         if len(args) != 2:
             raise ExpressionValidationError(f"{name}_requires_2_arguments")
         series = _as_series(args[0], data)
@@ -144,6 +144,15 @@ def _evaluate_call(node: ast.Call, data: pd.DataFrame) -> Any:
             return series.groupby(data["symbol"], sort=False).shift(window)
         if name == "delta":
             return series - series.groupby(data["symbol"], sort=False).shift(window)
+        return _rolling_by_symbol(series, data, window, name)
+
+    if name in {"max", "min"}:
+        if len(args) != 2:
+            raise ExpressionValidationError(f"{name}_requires_2_arguments")
+        if _is_nonpositive_scalar(args[1]):
+            return _elementwise_minmax(_as_series(args[0], data), args[1], name)
+        series = _as_series(args[0], data)
+        window = _int_arg(args[1])
         return _rolling_by_symbol(series, data, window, name)
 
     if name == "correlation":
@@ -162,9 +171,14 @@ def _evaluate_call(node: ast.Call, data: pd.DataFrame) -> Any:
         return _as_series(args[0], data).groupby(data["date"], sort=False).rank(pct=True)
 
     if name == "zscore":
-        if len(args) != 1:
-            raise ExpressionValidationError("zscore_requires_1_argument")
+        if len(args) not in {1, 2}:
+            raise ExpressionValidationError("zscore_requires_1_or_2_arguments")
         series = _as_series(args[0], data)
+        if len(args) == 2:
+            window = _int_arg(args[1])
+            rolling_mean = _rolling_by_symbol(series, data, window, "mean")
+            rolling_std = _rolling_by_symbol(series, data, window, "std")
+            return (series - rolling_mean) / rolling_std.where(rolling_std != 0.0)
         mean = series.groupby(data["date"], sort=False).transform("mean")
         std = series.groupby(data["date"], sort=False).transform("std")
         return (series - mean) / std.where(std != 0.0)
@@ -226,6 +240,17 @@ def _safe_divide(left: Any, right: Any) -> Any:
     if right == 0.0:
         return np.nan
     return left / right
+
+
+def _elementwise_minmax(series: pd.Series, scalar: Any, method: str) -> pd.Series:
+    scalar_value = float(scalar)
+    if method == "min":
+        return pd.Series(np.minimum(series.to_numpy(dtype=float), scalar_value), index=series.index)
+    return pd.Series(np.maximum(series.to_numpy(dtype=float), scalar_value), index=series.index)
+
+
+def _is_nonpositive_scalar(value: Any) -> bool:
+    return not isinstance(value, pd.Series) and float(value) <= 0.0
 
 
 def _as_series(value: Any, data: pd.DataFrame) -> pd.Series:

@@ -62,19 +62,40 @@ def main(argv: list[str] | None = None) -> None:
         neutralized_col = f"{factor_col}_neutralized"
         smoothed_col = f"{factor_col}_smoothed"
 
-        if factor_type == "generated_expression":
-            factor_data = compute_expression_factor(
-                universe,
-                expression=generated_factor["expression"],
-                output_col=factor_col,
+        try:
+            if factor_type == "generated_expression":
+                factor_data = compute_expression_factor(
+                    universe,
+                    expression=generated_factor["expression"],
+                    output_col=factor_col,
+                )
+            else:
+                factor_data = compute_factor(
+                    universe,
+                    template_name=template_name,
+                    window=window,
+                    output_col=factor_col,
+                )
+        except Exception as exc:  # noqa: BLE001 - one bad LLM factor must not stop the run.
+            warning = f"Factor {factor_name} failed and was skipped: {exc}"
+            warnings.append(warning)
+            factor_logs.append(
+                {
+                    "factor": factor_name,
+                    "template_name": template_name,
+                    "template": generated_factor["expression"],
+                    "window": window,
+                    "expression_hash": generated_factor["expression_hash"],
+                    "status": "failed",
+                    "signal_column": "",
+                    "valid_observations": 0,
+                    "rank_ic_dates": 0,
+                    "error": str(exc),
+                }
             )
-        else:
-            factor_data = compute_factor(
-                universe,
-                template_name=template_name,
-                window=window,
-                output_col=factor_col,
-            )
+            print(f"{factor_name:>10} | failed: {exc}")
+            continue
+
         factor_data = normalize_factor(
             factor_data,
             factor_col=factor_col,

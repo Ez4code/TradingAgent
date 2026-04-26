@@ -20,6 +20,7 @@ def generate_factor_plan(request_text: str) -> dict[str, Any]:
     generated = []
     rejected = []
     seen_hashes: set[str] = set()
+    used_factor_names: set[str] = set()
 
     for index, item in enumerate(plan.get("generated_expressions", []), start=1):
         expression = item["expression"]
@@ -35,7 +36,10 @@ def generate_factor_plan(request_text: str) -> dict[str, Any]:
             )
             continue
         seen_hashes.add(expression_hash)
-        factor_name = item.get("factor_name") or f"llm_generated_{index}"
+        factor_name = _unique_factor_name(
+            item.get("factor_name") or f"llm_generated_{index}",
+            used_factor_names,
+        )
         generated.append(
             {
                 "factor_type": "generated_expression",
@@ -77,10 +81,11 @@ def generate_factor_plan(request_text: str) -> dict[str, Any]:
                 )
                 continue
             seen_hashes.add(expression_hash)
+            factor_name = _unique_factor_name(f"{template_name}_{window}", used_factor_names)
             generated.append(
                 {
                     "factor_type": "template",
-                    "factor_name": f"{template_name}_{window}",
+                    "factor_name": factor_name,
                     "template_name": template_name,
                     "window": window,
                     "expression": expression,
@@ -144,6 +149,17 @@ def _write_json(path: object, data: object) -> None:
 def _expression_hash(template_name: str, expression: str, window: int) -> str:
     raw = f"{template_name}|{window}|{expression}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _unique_factor_name(name: str, used_names: set[str]) -> str:
+    base = name or "factor"
+    candidate = base
+    suffix = 2
+    while candidate in used_names:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
 
 
 def _new_template_acceptance_stub(proposal: dict[str, Any]) -> dict[str, Any]:
