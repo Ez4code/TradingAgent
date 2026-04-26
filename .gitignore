@@ -1,0 +1,22 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local environments and secrets
+.env
+.env.*
+*.pem
+*.key
+*.token
+
+# Generated research data and reports
+alpha_factory/data/raw_stock_data/
+alpha_factory/outputs/*
+!alpha_factory/outputs/.gitkeep
+
+# Local editor / OS files
+.DS_Store
+.idea/
+.vscode/
+
